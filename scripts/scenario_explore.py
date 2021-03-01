@@ -210,7 +210,7 @@ def run_scenario(index, interv, scenario_tag):
         ['python', 'cenario_generator.py', '-i', cenario_folder[index], '-d', str(day_init), str(day_next_1[index]),
          str(day_next_2), str(day_next_3), '-m', '3',
          '-I0', str(ni), '-R0', str(r_0), '-Rp', str(r0_post), '-p', str(g_e0), str(g_e1), str(g_e2), str(g_e3),
-         '-itv', interv[0], interv[1], interv[2], interv[3]])
+         '-itv', interv[0], interv[1], interv[2], interv[3]], '-pa', '1.0')
 
     os.chdir("..")
     subprocess.call(['bin/csv_to_input', cenario_folder[index]], stdout=open(os.devnull, 'wb'))

@@ -5,6 +5,7 @@ import os
 import sys
 import argparse
 from scipy.sparse.linalg import eigs
+from netgen import compute_r0
 
 nu_exp = 0.4  # exposed contamination
 
@@ -78,6 +79,8 @@ parser.add_argument('-s', action='store_true', help='If set, this argument print
 parser.add_argument('-ex', type=int, nargs=2, help='Extra intervention case. Require the intervention code and '
                                                    'then the date. See README file for intervention table.',
                     required=False)
+parser.add_argument('-pa', '--attack', type=float, help='Average probability of infection',
+                    required=False)
 
 args = parser.parse_args()
 
@@ -110,6 +113,9 @@ prob_t[0] = float(args.prob[0])  # protection decrease of transmission probabili
 prob_t[1] = float(args.prob[1])
 prob_t[2] = float(args.prob[2])
 prob_t[3] = float(args.prob[3])
+
+if args.attack is not None:
+    pa = float(args.attack)
 
 age_strata = 16
 t_days = 400
@@ -244,6 +250,7 @@ eta = data_epid[8, :]
 rho = data_epid[9, :]
 alpha = data_epid[10, :]
 
+
 # calcula os valores de 'a' e gama's e mu_cov
 
 a = 1 - np.exp(-np.divide(1, dL))
@@ -265,7 +272,8 @@ else:
 
 # cria arquivo initial.csv
 
-rel_pop = np.divide(pop, np.sum(pop))  # partitioning of the cases, for I0 > age_strata
+tot_pop = np.sum(pop)
+rel_pop = np.divide(pop, tot_pop)  # partitioning of the cases, for I0 > age_strata
 I_0_vec = np.zeros(pop.size)
 I_0_vec[13] = I_0
 
@@ -311,18 +319,26 @@ with open('parameters.csv', 'wb') as csvfile:
 
 P = np.outer(pop, np.divide(1, pop))
 # C_sym_all = 0.5*(np.dot(np.transpose(P), matrix_all) + np.dot(np.transpose(matrix_all), P))
-C_sym_home = 0.5 * (matrix_home + symmetrize(matrix_home, pop, age_strata))
-C_sym_school = 0.5 * (matrix_school + symmetrize(matrix_school, pop, age_strata))
-C_sym_work = 0.5 * (matrix_work + symmetrize(matrix_work, pop, age_strata))
-C_sym_other = 0.5 * (matrix_other + symmetrize(matrix_other, pop, age_strata))
+#C_sym_home = 0.5 * (matrix_home + symmetrize(matrix_home, pop, age_strata))
+#C_sym_school = 0.5 * (matrix_school + symmetrize(matrix_school, pop, age_strata))
+#C_sym_work = 0.5 * (matrix_work + symmetrize(matrix_work, pop, age_strata))
+#C_sym_other = 0.5 * (matrix_other + symmetrize(matrix_other, pop, age_strata))
+C_sym_home = matrix_home
+C_sym_school = matrix_school
+C_sym_work = matrix_work
+C_sym_other = matrix_other
 C_sym = C_sym_home + C_sym_work + C_sym_school + C_sym_other
+#attack_weight = [0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059, 0.059]
+attack_weight = [0.00253, 0.00268275, 0.00325998, 0.00587223, 0.00974128, 0.01562692, 0.02170502, 0.02817997,
+                 0.03376366, 0.03846543, 0.04203209, 0.04679663, 0.05946109, 0.08191154, 0.0843, 0.0844]
+attack_weight = np.multiply(1.0, attack_weight)
 for i in range(0, age_strata):
     for j in range(0, age_strata):
-        C_sym[i, j] = C_sym[i, j] * pop[i] / pop[j]
-        C_sym_home[i, j] = C_sym_home[i, j] * pop[i] / pop[j]
-        C_sym_school[i, j] = C_sym_school[i, j] * pop[i] / pop[j]
-        C_sym_work[i, j] = C_sym_work[i, j] * pop[i] / pop[j]
-        C_sym_other[i, j] = C_sym_other[i, j] * pop[i] / pop[j]
+        C_sym[i, j] = attack_weight[i] * C_sym[i, j] / rel_pop[i] #* pop[i] / pop[j]
+        C_sym_home[i, j] = attack_weight[i] * C_sym_home[i, j] / rel_pop[i] #* pop[i] / pop[j]
+        C_sym_school[i, j] = attack_weight[i] * C_sym_school[i, j] / rel_pop[i] #* pop[i] / pop[j]
+        C_sym_work[i, j] = attack_weight[i] * C_sym_work[i, j] / rel_pop[i] #* pop[i] / pop[j]
+        C_sym_other[i, j] = attack_weight[i] * C_sym_other[i, j] / rel_pop[i] #* pop[i] / pop[j]
 w, v = eigs(C_sym)
 # Main eigenvector is normalized, norm_vec = 1. Mean square_vec=1/age_strata
 # print(w.max())
@@ -331,39 +347,30 @@ w, v = eigs(C_sym)
 # norm_vec = np.dot(eig_vec, eig_vec)
 # square_vec = np.multiply(eig_vec, eig_vec)
 # print(np.mean(norm_vec), 1./16.)
-eig_value = np.real(w.max())
-if model == 2 or 3:
-    beta = R0 * gamma[0] / (rho.max() + np.mean(alpha) * (1 - rho.max())) / eig_value
-    beta_val = R0 * gamma[0] / (rho.max() + np.mean(alpha) * (1 - rho.max()))
-elif model == 3:
-    beta = R0 * gamma[0] / (rho.max() + np.mean(alpha) * (1 - rho.max()) + gamma[0] * nu_exp / a[0]) / eig_value
-else:
-    beta = R0 * gamma[0]
-C_all_pre = beta * C_sym * age_strata  ## itv_id = 0
-C_home_pre = beta * C_sym_home * age_strata
-C_work_pre = beta * C_sym_work * age_strata
-C_school_pre = beta * C_sym_school * age_strata
-C_other_pre = beta * C_sym_other * age_strata
+R0_raw = compute_r0(input_folder, C_sym, False)
 
-if model == 2 or model == 3:
-    beta = R0_post * gamma[0] / (rho.max() + np.mean(alpha) * (1 - rho.max())) / eig_value
-    beta_val = R0_post * gamma[0] / (rho.max() + np.mean(alpha) * (1 - rho.max()))
-elif model == 3:
-    beta = R0_post * gamma[0] / (rho.max() + np.mean(alpha) * (1 - rho.max()) + gamma[0] * nu_exp / a[0]) / eig_value
+if args.attack is None:
+    R0_ratio = R0/R0_raw
+    R0_ratio_post = R0_post / R0_raw
 else:
-    beta = R0 * gamma[0]
+    R0_ratio = pa
+    R0_ratio_post = pa
+C_all_pre = R0_ratio * C_sym
+C_home_pre = R0_ratio * C_sym_home
+C_work_pre = R0_ratio * C_sym_work
+C_school_pre = R0_ratio * C_sym_school
+C_other_pre = R0_ratio * C_sym_other
 
-C_home_post = beta * C_sym_home * age_strata
-C_work_post = beta * C_sym_work * age_strata
-C_school_post = beta * C_sym_school * age_strata
-C_other_post = beta * C_sym_other * age_strata
+C_home_post = R0_ratio_post * C_sym_home
+C_work_post = R0_ratio_post * C_sym_work
+C_school_post = R0_ratio_post * C_sym_school
+C_other_post = R0_ratio_post * C_sym_other
 C_all_post = C_home_post + C_work_post + C_school_post + C_other_post  ## itv_id = 1
 
 # Build matrix for scenarios
 I_old = np.diag(np.ones(age_strata))
 A_home = np.diag(np.ones(age_strata))
 B_other = np.diag(np.ones(age_strata))
-B_school = np.diag(np.ones(age_strata))
 B_lock = np.diag(np.ones(age_strata))
 B_strong_lock = np.diag(np.ones(age_strata))
 W_work = np.diag(np.ones(age_strata))
@@ -375,8 +382,6 @@ for i in range(0, 4):
     A_home[i, i] = 1.5
 for i in range(4, age_strata):
     A_home[i, i] = 1.1
-for i in range(0, 4):
-    B_school[i, i] = 0.4
 for i in range(0, 4):
     B_other[i, i] = 0.4
 for i in range(4, age_strata):
@@ -390,7 +395,7 @@ for i in range(0, 4):
 for i in range(4, age_strata):
     B_strong_lock[i, i] = 0.1
 for i in range(0, age_strata):
-    W_work[i, i] = 0.5
+    W_work[i, i] = 0.6
 for i in range(0, age_strata):
     W_lock[i, i] = 0.4
 for i in range(0, age_strata):
@@ -460,6 +465,8 @@ if args.ex is not None:
                                              C_all_school_other_work, C_all_lock, C_all_old, C_all_old_school,
                                              C_all_old_school_other, C_all_old_school_other_work, C_all_old_lock,
                                              C_all_old_strong_lock)
+
+compute_r0(input_folder, matrix_1, False)
 
 beta_gama_header = ['DAY', 'GAMA_F1', 'GAMA_F2', 'GAMA_F3', 'GAMA_F4', 'GAMA_F5', 'GAMA_F6', 'GAMA_F7', 'GAMA_F8',
                     'GAMA_F9', 'GAMA_F10', 'GAMA_F11', 'GAMA_F12', 'GAMA_F13', 'GAMA_F14', 'GAMA_F15', 'GAMA_F16',
